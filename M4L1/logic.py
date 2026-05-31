@@ -23,7 +23,8 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS prizes (
                 prize_id INTEGER PRIMARY KEY,
                 image TEXT,
-                used INTEGER DEFAULT 0
+                used INTEGER DEFAULT 0,
+                sent_time TEXT  -- время первого розыгрыша
             )
             ''')
 
@@ -119,13 +120,9 @@ class DatabaseManager:
         ''', (user_id,))
         return [row[0] for row in cur.fetchall()]
 
-# --- Функция создания коллажа ---
+
 def create_collage(image_paths, target_size=(100, 100)):
-    """
-    Создаёт коллаж из изображений.
-    Все изображения масштабируются до target_size.
-    Автоматически определяет сетку: num_rows × num_cols.
-    """
+
     images = []
     for path in image_paths:
         if not os.path.exists(path):
@@ -153,3 +150,39 @@ def create_collage(image_paths, target_size=(100, 100)):
         collage[row*h:(row+1)*h, col*w:(col+1)*w, :] = img
 
     return collage
+    
+def mark_prize_sent_time(self, prize_id, sent_time=None):
+    """Отмечает время первого розыгрыша приза."""
+    if sent_time is None:
+        sent_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn = sqlite3.connect(self.database)
+    with conn:
+        conn.execute('UPDATE prizes SET sent_time = ? WHERE prize_id = ?', (sent_time, prize_id))
+        conn.commit()
+
+def get_prizes_for_second_chance(self):
+    """Возвращает призы, по которым прошёл 1 час, но победителей < 3."""
+    conn = sqlite3.connect(self.database)
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT p.prize_id, p.image
+        FROM prizes p
+        WHERE p.used = 1
+          AND p.sent_time IS NOT NULL
+          AND DATETIME('now') >= DATETIME(p.sent_time, '+1 hour')
+          AND (SELECT COUNT(*) FROM winners w WHERE w.prize_id = p.prize_id) < 3
+    ''')
+    return cur.fetchall()
+
+def get_non_winners(self, prize_id):
+    """Возвращает user_id всех пользователей, кроме победителей этого приза."""
+    conn = sqlite3.connect(self.database)
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT u.user_id
+        FROM users u
+        WHERE u.user_id NOT IN (
+            SELECT w.user_id FROM winners w WHERE w.prize_id = ?
+        )
+    ''', (prize_id,))
+    return [row[0] for row in cur.fetchall()]
