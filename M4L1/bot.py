@@ -125,13 +125,16 @@ def hide_img(img_name):
     os.makedirs('hidden_img', exist_ok=True)
     cv2.imwrite(f'hidden_img/{img_name}', pixelated)
 
+
 def send_message():
     prize_data = manager.get_random_prize()
     if not prize_data:
         return
     prize_id, img_name = prize_data
     manager.mark_prize_used(prize_id)
+    manager.mark_prize_sent_time(prize_id)  # <-- Отмечаем время розыгрыша
     hide_img(img_name)
+
     for user_id in manager.get_users():
         try:
             with open(f'hidden_img/{img_name}', 'rb') as photo:
@@ -139,12 +142,41 @@ def send_message():
         except Exception as e:
             print(f"Ошибка при отправке фото пользователю {user_id}: {e}")
 
+
 def schedule_thread():
     schedule.every().hour.do(send_message)
+    schedule.every().hour.at(":05").do(send_second_chance)  # Через 5 минут после часа
     while True:
         schedule.run_pending()
         time.sleep(1)
 
+def send_second_chance():
+    """Раз в час проверяет, какие призы ждут второго шанса, и рассылает их неудачникам."""
+    prizes = manager.get_prizes_for_second_chance()
+    for prize_id, img_name in prizes:
+        # Получаем пользователей, которые НЕ выиграли
+        non_winners = manager.get_non_winners(prize_id)
+        if not non_winners:
+            continue
+
+        # Отправляем запикселенную версию
+        image_path = f'hidden_img/{img_name}'
+        if not os.path.exists(image_path):
+            hide_img(img_name)  # если нет — создаём
+
+        if not os.path.exists(image_path):
+            continue
+
+        for user_id in non_winners:
+            try:
+                with open(image_path, 'rb') as photo:
+                    bot.send_photo(
+                        user_id,
+                        photo,
+                        caption=f"🎯 Второй шанс Картинка «{img_name}» ещё не разыграна до конца — успей получить!"
+                    )
+            except Exception as e:
+                print(f"Не удалось отправить вторую попытку пользователю {user_id}: {e}")
 def polling_thread():
     bot.polling(none_stop=True)
 
